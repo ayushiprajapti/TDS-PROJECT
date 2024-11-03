@@ -1,0 +1,174 @@
+import requests
+import csv
+import time
+
+
+# Load GitHub token from an environment variable
+GITHUB_TOKEN = 'Entered token removed for safety'  # Make sure to set this in your environment
+
+# Set up headers with your token for authenticated requests
+headers = {
+    'Authorization': f'token {GITHUB_TOKEN
+    }'
+}
+
+# API endpoints
+user_search_url = 'https: //api.github.com/search/users'
+user_details_url_template = 'https: //api.github.com/users/{username}'
+repo_url_template = 'https: //api.github.com/users/{username}/repos'
+
+# Fetch users with over 100 followers in Melbourne
+def get_users_in_melbourne():
+    users = []
+    seen_usernames = set()  # To track unique usernames
+    page = 1
+    while True:
+        response = requests.get(
+            f"{user_search_url}?q=location:Melbourne+followers:>100&per_page=100&page={page}",
+            headers=headers
+        )
+        
+        if response.status_code == 403:  # Rate limit exceeded
+            print("Rate limit exceeded. Waiting for reset...")
+            time.sleep(60)  # Wait for a minute before retrying
+            continue
+        
+        if response.status_code != 200:
+            print(f"Failed to fetch users: {response.status_code}")
+            break
+        
+        data = response.json()
+        
+        if 'items' not in data or not data['items'
+]:
+            break
+        
+        for user in data['items'
+]:
+            if user['login'
+] not in seen_usernames:
+                seen_usernames.add(user['login'
+])
+                users.append(user)
+        
+        if len(data['items'
+]) < 100:
+            break
+        page += 1
+        time.sleep(1)  # To respect API rate limits
+    
+    return users
+
+# Fetch additional user details
+def get_user_details(username):
+    response = requests.get(user_details_url_template.format(username=username), headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Failed to fetch details for user {username}: {response.status_code}")
+        return None
+
+# Clean up company names as specified
+def clean_company_name(company_name):
+    if company_name:
+        company_name = company_name.strip()
+        if company_name.startswith('@'):
+            company_name = company_name[
+    1:
+]
+        return company_name.upper()
+    return ''
+
+# Fetch repositories for a specific user
+def get_user_repositories(username):
+    repos = []
+    page = 1
+    while len(repos) < 500:
+        response = requests.get(f"{repo_url_template.format(username=username)}?per_page=100&page={page}", headers=headers)
+        if response.status_code == 403:  # Rate limit exceeded
+            print("Rate limit exceeded. Waiting for reset...")
+            time.sleep(60)  # Wait for a minute before retrying
+            continue
+            
+        if response.status_code != 200:
+            print(f"Failed to fetch repositories for user {username}: {response.status_code}")
+            break
+        
+        page_repos = response.json()
+        if not page_repos:
+            break
+        repos.extend(page_repos)
+        page += 1
+        time.sleep(1)
+        if len(page_repos) < 100:
+            break  # Stop if the last page was less than 100 repositories
+    return repos[
+    : 500
+]  # Return up to 500 repositories
+
+# Save users and repositories to CSV files
+def save_to_csv(users):
+    # Save users to users.csv
+    with open('users.csv', 'w', newline='', encoding='utf-8') as user_file:
+        writer = csv.writer(user_file)
+        writer.writerow(['login', 'name', 'company', 'location', 'email', 'hireable', 'bio', 
+                         'public_repos', 'followers', 'following', 'created_at'
+])
+        for user in users:
+            user_details = get_user_details(user['login'
+])
+            if user_details:
+                writer.writerow([
+                    user_details.get('login', ''),
+                    user_details.get('name', ''),
+                    clean_company_name(user_details.get('company', '')),
+                    user_details.get('location', ''),
+                    user_details.get('email', ''),
+                    'true' if user_details.get('hireable') else 'false',  # Ensure lowercase
+                    user_details.get('bio', ''),
+                    user_details.get('public_repos',
+    0),
+                    user_details.get('followers',
+    0),
+                    user_details.get('following',
+    0),
+                    user_details.get('created_at', '')
+])
+
+    
+    # Save repositories to repositories.csv
+    with open('repositories_output3.csv', 'w', newline='', encoding='utf-8') as repo_file:
+        writer = csv.writer(repo_file)
+        writer.writerow(['login', 'full_name', 'created_at', 'stargazers_count', 'watchers_count',
+                         'language', 'has_projects', 'has_wiki', 'license_name'
+])
+        
+        for user in users:
+            repos = get_user_repositories(user['login'
+])
+            if repos:  # Check if repos is not None or empty
+                for repo in repos:
+                    if repo:  # Ensure repo is not None
+                        writer.writerow([
+                            user['login'
+    ],  # The user's GitHub login ID
+                            repo.get('full_name', ''),
+                            repo.get('created_at', ''),
+                            repo.get('stargazers_count',
+    0),
+                            repo.get('watchers_count',
+    0),
+                            repo.get('language', ''),
+                            str(repo.get('has_projects', False)).lower(),
+                            str(repo.get('has_wiki', False)).lower(),
+                            repo.get('license',
+    {}).get('name', '')  # Safe access to license name
+])
+            else:
+                print(f"No repositories found for user {user['login']}.")
+
+# Fetch users and save to CSV
+users = get_users_in_melbourne()
+save_to_csv(users)
+
+print("Data saved to users_output3.csv and repositories_output3.csv")
